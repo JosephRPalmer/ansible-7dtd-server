@@ -31,4 +31,4 @@ Example Playbook
 License
 -------
 
-Creative Commons Attribution Non Commercial 4.0 International
+GNU General Public License v3.0 or later
