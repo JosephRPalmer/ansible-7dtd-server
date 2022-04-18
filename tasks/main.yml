@@ -1,0 +1,103 @@
+---
+- name: Update all packages to the latest version
+  apt:
+    upgrade: yes
+    update_cache: yes
+- name: Install the package "fail2ban"
+  apt:
+    name: fail2ban
+    state: latest
+
+- name: add end user
+  user:
+    name: "{{ username }}"
+    shell: /bin/bash
+    groups: sudo
+    append: yes
+    password: "{{ my_password | password_hash('sha512') }}"
+    update_password: on_create
+
+- name: Set authorized key
+  ansible.posix.authorized_key:
+    user: punc
+    state: present
+    key: "{{ my_pub_key }}"
+
+- name: create steam group
+  group:
+    name: steam
+
+- name: add steam user
+  user:
+    name: steam
+    shell: /bin/bash
+    groups: sudo,steam
+    append: yes
+    password: "{{ steam_password | password_hash('sha512') }}"
+    update_password: on_create
+
+- name: Enable multiverse repository
+  apt_repository:
+    repo: "{{ item }}"
+  loop:
+    - "deb http://archive.ubuntu.com/ubuntu/ focal multiverse"
+    - "deb http://archive.ubuntu.com/ubuntu/ focal-updates multiverse"
+    - "deb http://security.ubuntu.com/ubuntu/ focal-security multiverse"
+
+- name: Accept steamcmd license
+  debconf:
+    name: "steam"
+    question: "steam/question"
+    value: "I AGREE"
+    vtype: "select"
+
+- name: Add i386 compatibility for steamcmd for x64
+  lineinfile: dest=/var/lib/dpkg/arch line="i386" create=yes
+  register: add_i386
+- name: Install steamCMD
+  apt: name={{item}} update_cache={{add_i386.changed}}
+  with_items: ["lib32gcc-s1", "steamcmd"]
+
+- name: Create a symbolic link
+  ansible.builtin.file:
+    src: /usr/games/steamcmd
+    dest: /home/steam/steamcmd
+    state: link
+
+- name: Create installation directory
+  file:
+    dest: /home/steam/7dtd
+    owner: steam
+    group: steam
+    mode: 0764
+    state: directory
+
+- name: Create 7dtd server start script
+  copy:
+    content: |
+      #!/bin/bash
+      export InstallationDir=/home/steam/7dtd
+      export templdpath=$LD_LIBRARY_PATH
+      export LD_LIBRARY_PATH=$InstallationDir/linux64:$LD_LIBRARY_PATH
+      /usr/games/steamcmd +login anonymous +force_install_dir $InstallationDir +app_update 294420 validate +quit
+    dest: /home/steam/7dtd/install.sh
+    owner: steam
+    group: steam
+    mode: 0774
+
+- name: Execute the command in remote shell; stdout goes to the specified file on the remote
+  shell: /home/steam/7dtd/install.sh
+  become: yes
+  become_user: steam
+
+- name: Configure sshd
+  lineinfile:
+    path: "/etc/ssh/sshd_config"
+    regex: "^(#)?{{item.key}}"
+    line: "{{item.key}} {{item.value}}"
+    state: present
+  loop:
+    - { key: "PermitRootLogin", value: "no" }
+    - { key: "PasswordAuthentication", value: "no" }
+  notify:
+    - Restart ssh
